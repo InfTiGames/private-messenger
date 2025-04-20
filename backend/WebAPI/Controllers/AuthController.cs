@@ -3,6 +3,8 @@ using Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using WebAPI.Models.Auth;
+using Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 
 namespace WebAPI.Controllers;
 
@@ -13,16 +15,19 @@ public class AuthController : ControllerBase
     private readonly IUserRepository _userRepo;
     private readonly IAuthService _auth;
     private readonly ILogger<AuthController> _logger;
+    private readonly AppDbContext _dbContext;
 
     public AuthController(
         IUserRepository userRepo,
         IAuthService aut,
-        ILogger<AuthController> logger
+        ILogger<AuthController> logger,
+        AppDbContext dbContext
     )
     {
         _userRepo = userRepo;
         _auth = aut;
         _logger = logger;
+        _dbContext = dbContext;
     }
 
     [HttpPost("register")]
@@ -47,6 +52,18 @@ public class AuthController : ControllerBase
             await _userRepo.SaveChangesAsync();
 
             var token = _auth.GenerateJwtToken(user);
+
+            var refreshToken = _auth.GenerateRefreshToken();
+
+            var newRefreshToken = new RefreshToken
+            {
+                Token = refreshToken,
+                Expires = DateTime.UtcNow.AddDays(7), // живёт 7 дней
+                UserId = user.Id
+            };
+
+            _dbContext.RefreshTokens.Add(newRefreshToken);
+            await _dbContext.SaveChangesAsync();
             return Ok(new { Token = token });
         }
         catch (Exception ex)
@@ -76,5 +93,44 @@ public class AuthController : ControllerBase
     {
         var userId = User?.Identity?.Name; // Или вытаскивай claim из токена
         return Ok(new { userId });
+    }
+
+    [HttpPost("refresh")]
+    public async Task<IActionResult> Refresh(
+        [FromBody] Microsoft.AspNetCore.Identity.Data.RefreshRequest model
+    )
+    {
+        var existingToken = await _dbContext.RefreshTokens
+            .Include(r => r.User)
+            .FirstOrDefaultAsync(r => r.Token == model.RefreshToken);
+
+        if (
+            existingToken == null
+            || existingToken.Expires < DateTime.UtcNow
+            || existingToken.IsUsed
+            || existingToken.IsRevoked
+        )
+            return Unauthorized("Невалидный refresh token");
+
+        existingToken.IsUsed = true;
+        _dbContext.RefreshTokens.Update(existingToken);
+        await _dbContext.SaveChangesAsync();
+
+        // Новый access token
+        var accessToken = _auth.GenerateJwtToken(existingToken.User);
+        var newRefreshToken = _auth.GenerateRefreshToken();
+
+        // Сохраняем новый
+        var newTokenEntity = new RefreshToken
+        {
+            Token = newRefreshToken,
+            Expires = DateTime.UtcNow.AddDays(7),
+            UserId = existingToken.UserId
+        };
+
+        _dbContext.RefreshTokens.Add(newTokenEntity);
+        await _dbContext.SaveChangesAsync();
+
+        return Ok(new { accessToken, refreshToken = newRefreshToken });
     }
 }

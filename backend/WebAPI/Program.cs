@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Serilog;
+using System.Security.Claims;
+using MassTransit;
 
 var builder = WebApplication.CreateBuilder(args);
 var configuration = builder.Configuration;
@@ -42,7 +44,8 @@ builder.Services
             ValidateIssuerSigningKey = true,
             ValidIssuer = jwtSettings["Issuer"], // Without "Jwt" prefix!
             ValidAudience = jwtSettings["Audience"], // Without "Jwt" prefix!
-            IssuerSigningKey = new SymmetricSecurityKey(key)
+            IssuerSigningKey = new SymmetricSecurityKey(key),
+            RoleClaimType = ClaimTypes.Role // Укажите имя claim для роли
         };
     });
 
@@ -93,6 +96,40 @@ builder.Services.AddDbContext<AppDbContext>(
 // Регистрация зависимостей
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<MessageCacheService>();
+
+builder.Services.AddMassTransit(x =>
+{
+    x.AddConsumer<MessageConsumer>();
+    x.UsingRabbitMq(
+        (context, cfg) =>
+        {
+            cfg.Host(
+                "localhost",
+                "/",
+                h =>
+                {
+                    h.Username("guest");
+                    h.Password("guest");
+                }
+            );
+
+            cfg.ReceiveEndpoint(
+                "message-queue",
+                e =>
+                {
+                    e.ConfigureConsumer<MessageConsumer>(context);
+                }
+            );
+        }
+    );
+});
+
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = "localhost:6379"; // Укажите адрес вашего Redis-сервера
+    options.InstanceName = "PrivateMessenger_";
+});
 
 try
 {
