@@ -59,7 +59,8 @@ public class AuthController : ControllerBase
             {
                 Token = refreshToken,
                 Expires = DateTime.UtcNow.AddDays(7), // живёт 7 дней
-                UserId = user.Id
+                UserId = user.Id,
+                User = user
             };
 
             _dbContext.RefreshTokens.Add(newRefreshToken);
@@ -125,7 +126,8 @@ public class AuthController : ControllerBase
         {
             Token = newRefreshToken,
             Expires = DateTime.UtcNow.AddDays(7),
-            UserId = existingToken.UserId
+            UserId = existingToken.UserId,
+            User = existingToken.User
         };
 
         _dbContext.RefreshTokens.Add(newTokenEntity);
