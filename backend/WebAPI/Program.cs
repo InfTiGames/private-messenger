@@ -2,13 +2,14 @@ using Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Application.Interfaces;
 using Infrastructure.Persistence.Repositories;
-using Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Serilog;
 using System.Security.Claims;
 using MassTransit;
+using Infrastructure.Messaging;
+using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 var configuration = builder.Configuration;
@@ -54,31 +55,27 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
-    options.SwaggerDoc("v1", new() { Title = "PrivateMessenger API", Version = "v1" });
-
-    // Настройка JWT Bearer Auth для Swagger
+    options.SwaggerDoc("v1", new OpenApiInfo { Title = "Private Messenger API", Version = "v1" });
     options.AddSecurityDefinition(
         "Bearer",
-        new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+        new OpenApiSecurityScheme
         {
+            In = ParameterLocation.Header,
+            Description = "Введите токен JWT",
             Name = "Authorization",
-            Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
-            Scheme = "bearer",
-            BearerFormat = "JWT",
-            In = Microsoft.OpenApi.Models.ParameterLocation.Header,
-            Description = "Введите JWT токен: Bearer {your token}"
+            Type = SecuritySchemeType.ApiKey,
+            Scheme = "Bearer"
         }
     );
-
     options.AddSecurityRequirement(
-        new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+        new OpenApiSecurityRequirement
         {
             {
-                new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+                new OpenApiSecurityScheme
                 {
-                    Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                    Reference = new OpenApiReference
                     {
-                        Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+                        Type = ReferenceType.SecurityScheme,
                         Id = "Bearer"
                     }
                 },
@@ -97,20 +94,33 @@ builder.Services.AddDbContext<AppDbContext>(
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<MessageCacheService>();
+builder.Services.AddScoped<IChatRepository, ChatRepository>();
+builder.Services.AddScoped<IMessageQueueService, RabbitMqService>();
 
 builder.Services.AddMassTransit(x =>
 {
     x.AddConsumer<MessageConsumer>();
+
     x.UsingRabbitMq(
         (context, cfg) =>
         {
             cfg.Host(
-                "localhost",
+                builder.Configuration["RabbitMQ:Host"],
                 "/",
                 h =>
                 {
-                    h.Username("guest");
-                    h.Password("guest");
+                    h.Username(
+                        builder.Configuration["RabbitMQ:User"]
+                            ?? throw new InvalidOperationException(
+                                "RabbitMQ username is not configured."
+                            )
+                    );
+                    h.Password(
+                        builder.Configuration["RabbitMQ:Password"]
+                            ?? throw new InvalidOperationException(
+                                "RabbitMQ password is not configured."
+                            )
+                    );
                 }
             );
 
@@ -131,44 +141,33 @@ builder.Services.AddStackExchangeRedisCache(options =>
     options.InstanceName = "PrivateMessenger_";
 });
 
-try
-{
-    Log.Information("Приложение запускается...");
-    var app = builder.Build();
-    Log.Information("Приложение построено успешно.");
+Log.Information("Приложение запускается...");
+var app = builder.Build();
+Log.Information("Приложение построено успешно.");
 
-    // Настройка middleware
-    if (app.Environment.IsDevelopment())
+// Настройка middleware
+if (app.Environment.IsDevelopment())
+{
+    Log.Information("Настройка Swagger...");
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
     {
-        Log.Information("Настройка Swagger...");
-        app.UseSwagger();
-        app.UseSwaggerUI(c =>
-        {
-            c.SwaggerEndpoint("/swagger/v1/swagger.json", "PrivateMessenger API V1");
-            c.RoutePrefix = string.Empty; // Swagger UI доступен по корню
-        });
-    }
-
-    Log.Information("Настройка HTTPS редиректа...");
-    app.UseHttpsRedirection();
-
-    Log.Information("Настройка аутентификации...");
-    app.UseAuthentication(); // Обязательно ДО UseAuthorization
-
-    Log.Information("Настройка авторизации...");
-    app.UseAuthorization();
-
-    Log.Information("Настройка маршрутов контроллеров...");
-    app.MapControllers();
-
-    Log.Information("Запуск приложения...");
-    app.Run();
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "PrivateMessenger API V1");
+        c.RoutePrefix = string.Empty; // Swagger UI доступен по корню
+    });
 }
-catch (Exception ex)
-{
-    Log.Fatal(ex, "Ошибка при запуске приложения");
-}
-finally
-{
-    Log.CloseAndFlush();
-}
+
+Log.Information("Настройка HTTPS редиректа...");
+app.UseHttpsRedirection();
+
+Log.Information("Настройка аутентификации...");
+app.UseAuthentication(); // Обязательно ДО UseAuthorization
+
+Log.Information("Настройка авторизации...");
+app.UseAuthorization();
+
+Log.Information("Настройка маршрутов контроллеров...");
+app.MapControllers();
+
+Log.Information("Запуск приложения...");
+app.Run();

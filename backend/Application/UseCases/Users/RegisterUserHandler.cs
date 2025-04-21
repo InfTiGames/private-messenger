@@ -35,7 +35,8 @@ public class RegisterUserHandler : IRequestHandler<RegisterUserCommand, Result<U
         {
             Email = request.Email,
             Nickname = request.Nickname,
-            PasswordHash = passwordHash
+            PasswordHash = passwordHash,
+            RefreshTokens = new List<RefreshToken>() // Initialize RefreshTokens as an empty list
         };
 
         await _userRepository.AddAsync(newUser);

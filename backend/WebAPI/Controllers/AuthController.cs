@@ -1,10 +1,8 @@
+using Application.DTOs;
 using Application.Interfaces;
-using Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using WebAPI.Models.Auth;
-using Infrastructure.Persistence;
-using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace WebAPI.Controllers;
 
@@ -12,127 +10,45 @@ namespace WebAPI.Controllers;
 [Route("api/[controller]")]
 public class AuthController : ControllerBase
 {
-    private readonly IUserRepository _userRepo;
-    private readonly IAuthService _auth;
-    private readonly ILogger<AuthController> _logger;
-    private readonly AppDbContext _dbContext;
+    private readonly IAuthService _authService;
 
-    public AuthController(
-        IUserRepository userRepo,
-        IAuthService aut,
-        ILogger<AuthController> logger,
-        AppDbContext dbContext
-    )
+    public AuthController(IAuthService authService)
     {
-        _userRepo = userRepo;
-        _auth = aut;
-        _logger = logger;
-        _dbContext = dbContext;
+        _authService = authService;
     }
 
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
-        try
-        {
-            _logger.LogInformation("Попытка регистрации пользователя: {Email}", request.Email);
-            var existingUser = await _userRepo.GetByEmailAsync(request.Email);
-            if (existingUser != null)
-                return BadRequest("Email already registered");
-
-            var user = new User
-            {
-                Id = Guid.NewGuid(),
-                Email = request.Email,
-                Nickname = request.Nickname,
-                PasswordHash = _auth.HashPassword(request.Password),
-                CreatedAt = DateTime.UtcNow
-            };
-            await _userRepo.AddAsync(user);
-            await _userRepo.SaveChangesAsync();
-
-            var token = _auth.GenerateJwtToken(user);
-
-            var refreshToken = _auth.GenerateRefreshToken();
-
-            var newRefreshToken = new RefreshToken
-            {
-                Token = refreshToken,
-                Expires = DateTime.UtcNow.AddDays(7), // живёт 7 дней
-                UserId = user.Id,
-                User = user
-            };
-
-            _dbContext.RefreshTokens.Add(newRefreshToken);
-            await _dbContext.SaveChangesAsync();
-            return Ok(new { Token = token });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Ошибка при регистрации пользователя: {Email}", request.Email);
-            return StatusCode(500, "Internal server error");
-        }
+        var response = await _authService.RegisterUserAsync(request);
+        return Ok(response);
     }
 
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
-        var user = await _userRepo.GetByEmailAsync(request.Email);
-        if (user == null)
-            return Unauthorized("Invalid credentials");
+        var response = await _authService.LoginUserAsync(request);
+        return Ok(response);
+    }
 
-        if (!_auth.VerifyPassword(user.PasswordHash, request.Password))
-            return Unauthorized("Invalid credentials");
-
-        var token = _auth.GenerateJwtToken(user);
-        return Ok(new { Token = token });
+    [HttpPost("refresh")]
+    public async Task<IActionResult> Refresh([FromBody] string refreshToken)
+    {
+        var response = await _authService.RefreshTokenAsync(refreshToken);
+        return Ok(response);
     }
 
     [Authorize]
     [HttpGet("me")]
-    public IActionResult GetMyProfile()
+    public async Task<IActionResult> GetMyProfile()
     {
-        var userId = User?.Identity?.Name; // Или вытаскивай claim из токена
-        return Ok(new { userId });
-    }
-
-    [HttpPost("refresh")]
-    public async Task<IActionResult> Refresh(
-        [FromBody] Microsoft.AspNetCore.Identity.Data.RefreshRequest model
-    )
-    {
-        var existingToken = await _dbContext.RefreshTokens
-            .Include(r => r.User)
-            .FirstOrDefaultAsync(r => r.Token == model.RefreshToken);
-
-        if (
-            existingToken == null
-            || existingToken.Expires < DateTime.UtcNow
-            || existingToken.IsUsed
-            || existingToken.IsRevoked
-        )
-            return Unauthorized("Невалидный refresh token");
-
-        existingToken.IsUsed = true;
-        _dbContext.RefreshTokens.Update(existingToken);
-        await _dbContext.SaveChangesAsync();
-
-        // Новый access token
-        var accessToken = _auth.GenerateJwtToken(existingToken.User);
-        var newRefreshToken = _auth.GenerateRefreshToken();
-
-        // Сохраняем новый
-        var newTokenEntity = new RefreshToken
+        var nameIdentifier = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrEmpty(nameIdentifier))
         {
-            Token = newRefreshToken,
-            Expires = DateTime.UtcNow.AddDays(7),
-            UserId = existingToken.UserId,
-            User = existingToken.User
-        };
-
-        _dbContext.RefreshTokens.Add(newTokenEntity);
-        await _dbContext.SaveChangesAsync();
-
-        return Ok(new { accessToken, refreshToken = newRefreshToken });
+            return BadRequest("User identifier is missing.");
+        }
+        var userId = Guid.Parse(nameIdentifier);
+        var profile = await _authService.GetUserProfileAsync(userId);
+        return Ok(profile);
     }
 }

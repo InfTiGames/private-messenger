@@ -4,6 +4,7 @@ namespace Domain.Entities;
 
 public class Chat : BaseEntity
 {
-    public List<User> Participants { get; set; } = [];
-    public List<Message> Messages { get; set; } = [];
+    public string Name { get; set; } = string.Empty;
+    public List<ChatUser> ChatUsers { get; set; } = new(); // Связь с пользователями через ChatUser
+    public List<Message> Messages { get; set; } = new(); // Сообщения в чате
 }

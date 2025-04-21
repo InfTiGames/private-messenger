@@ -23,8 +23,6 @@ public class UserRepository : IUserRepository
 
     public async Task AddAsync(User user) => await _db.Users.AddAsync(user);
 
-    public void Delete(User user) => _db.Users.Remove(user);
-
     public async Task SaveChangesAsync() => await _db.SaveChangesAsync();
 
     public async Task<IEnumerable<User?>> GetAllAsync()
@@ -37,5 +35,20 @@ public class UserRepository : IUserRepository
         var users = await _db.Users.ToListAsync(); // Получение всех пользователей из таблицы Users
         _db.Users.RemoveRange(users); // Удаление всех пользователей
         await _db.SaveChangesAsync(); // Сохранение изменений в базе данных
+    }
+
+    public async Task DeleteUserAsync(string userId)
+    {
+        var user = await _db.Users.FindAsync(userId);
+        if (user != null)
+        {
+            _db.Users.Remove(user);
+            await _db.SaveChangesAsync();
+        }
+    }
+
+    public async Task<RefreshToken?> GetRefreshTokenAsync(string refreshToken)
+    {
+        return await _db.RefreshTokens.FirstOrDefaultAsync(rt => rt.Token == refreshToken); // Поиск токена в таблице RefreshTokens
     }
 }

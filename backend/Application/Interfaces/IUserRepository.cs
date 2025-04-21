@@ -9,7 +9,8 @@ public interface IUserRepository
     Task<User?> GetByNicknameAsync(string nickname);
     Task<User?> GetByIdAsync(Guid id);
     Task AddAsync(User user);
-    void Delete(User user);
     Task SaveChangesAsync();
     Task DeleteAllUsersAsync(); // Метод для удаления всех пользователей из таблицы Users
+    Task DeleteUserAsync(string userId);
+    Task<RefreshToken?> GetRefreshTokenAsync(string refreshToken);
 }
